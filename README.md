@@ -1,49 +1,78 @@
-# Codex Spec-First Workflow Kit
+# SpecFlow Protocol Kit
 
-这个目录是面向 Codex CLI 的 spec-first 项目启动包。
+面向 AI 编程工具的跨 Agent、可配置 Spec 驱动开发协议。它不要求团队只使用 Codex、Claude Code 或 Cursor 中的任一种；这些工具只是同一协议的不同执行端。
 
-目标是把“长期方法论”、“项目运行时规范”和“实际操作手册”分开，避免在真实开发时把模板、状态和执行说明混在一起。
+## 要解决的问题
 
-## 目录结构
+传统的「Master → Coder → QA」分会话流程有清楚的职责边界，却把调度工作留给了人：反复创建会话、交接上下文、跟进 QA 打回、维护状态，以及控制不受限的 subagent。
 
-### `01-methodology/`
+SpecFlow 将这些责任收敛到可审计的变更状态与运行时规则中：
 
-- `agent_prompts.md`
-  - 跨项目复用的方法论模板。
-  - 用来定义角色、阶段协作方式、会话初始化提示词。
+```text
+PRD → change 规划 → 人工批准 → 实现 → QA → 自动修复（受限）
+    → 下一个可执行 spec → 汇总验证 → 人工归档
+```
 
-### `02-project-template/`
+人负责范围、风险和发布决策；运行时负责「下一步是什么」；Agent 只执行一次权限受限的工作单。
 
-- `AGENT.md`
-  - 项目级执行宪法。
-  - 放进真实项目的 `.agent/AGENT.md`。
-- `master_plan.template.md`
-  - 项目看板模板。
-  - 初始化时复制为 `.agent/master_plan.md`。
-- `spec.template.md`
-  - 单个 vertical-slice spec 模板。
-  - 初始化时复制到 `.agent/specs/` 中。
+## 核心概念
 
-### `03-guides/`
+- **System Spec**：已实现、已确认的系统行为，是长期事实源。
+- **Change**：一次独立变更的工作区；保存 proposal、Delta Spec、design、tasks、review 和状态。
+- **Delta Spec**：明确表达 `ADDED`、`MODIFIED`、`REMOVED` 的需求变化。归档时合并到 System Spec。
+- **Task lease**：同一 spec 同一时刻只有一个可写执行者，避免多个 Agent 覆盖彼此改动。
+- **Adapter**：将统一工作单转换为具体工具的命令、规则或可复制交接包。
+- **设计维度**：项目初始化生成 `docs/design/`（设计宪章、tokens、视觉验收清单）；
+  change 的 proposal 声明 Design Impact（none/visual/design_system），视觉变更证据前置，
+  设计需求以 MUST 形式进入 Design System Spec 域，QA 按视觉验收清单机械打勾。
 
-- `codex-cli-操作手册.md`
-  - 面向日常开发的使用说明。
-  - 说明 Master / Coder / QA 如何在 Codex CLI 中实际运作。
+完整定义见 [协议说明](01-methodology/specflow-protocol.md) 与 [状态机](01-methodology/state-machine.md)。
 
-## 推荐使用方式
+## 推荐目录
 
-新项目初始化时，建议按以下顺序使用：
+在业务项目中初始化后，运行时目录为：
 
-1. 先阅读 `01-methodology/agent_prompts.md`，确认角色和流程是否适用于当前项目。
-2. 在项目仓库中创建 `.agent/` 目录。
-3. 将 `02-project-template/AGENT.md` 复制到 `.agent/AGENT.md`。
-4. 将 `02-project-template/master_plan.template.md` 复制为 `.agent/master_plan.md`。
-5. 在 `.agent/specs/` 下基于 `02-project-template/spec.template.md` 创建具体 spec。
-6. 按 `03-guides/codex-cli-操作手册.md` 的流程运行 Master、Coder、QA 会话。
+```text
+.specflow/
+  config.yaml
+  state.yaml
+  system-specs/
+  changes/
+    <change-id>/
+      proposal.md
+      design.md
+      tasks.md
+      state.yaml
+      specs/
+      reviews/
+      handoffs/
+  history/
+```
 
-## 核心原则
+仓库模板在 [`02-project-template/`](02-project-template/)；从 [快速上手](03-guides/quickstart.md) 开始。
 
-- 文件是状态源，不依赖模型长期记忆。
-- Master、Coder、QA 尽量拆成不同 Codex 会话。
-- `AGENT.md` 记录稳定规则，`master_plan.md` 记录状态，`specs/*.md` 记录实现闭环。
-- QA 必须对照 spec 验收，而不是只看功能表面是否可用。
+## 设计原则
+
+- **协议优先，平台可替换**：核心工件均为 Markdown/YAML；不依赖某一家 Agent 的私有会话状态。
+- **变更与事实分离**：进行中的需求不污染已实现的长期系统规范。
+- **自动化有边界**：低风险缺陷可以自动修复；需求歧义、架构、安全风险和重复失败必须升级给人。
+- **默认禁止 subagent**：只有编排器能按配置派发短生命周期、不可递归、能力受限的辅助任务。
+- **降级而不失真**：无法自动唤起某工具时，生成同一份交接包，由用户手动运行；状态与验收规则不变。
+
+## 与 OpenSpec 的关系
+
+本项目借鉴 OpenSpec 的 change folder、Delta Spec、同步与归档模型；在此基础上增加跨 Agent 路由、任务租约、QA 修复循环和 subagent 治理。它不是 OpenSpec 的 fork，也不要求安装 OpenSpec。
+
+## v0.1 CLI
+
+本仓库已提供本地 TypeScript runtime 的第一版。安装依赖并构建后，可用 `node dist/cli.js` 运行：
+
+```bash
+npm install
+npm run build
+node dist/cli.js init /path/to/your-project
+```
+
+当前命令覆盖 `init`、`new`、`add-spec`、`submit-plan`、`approve`、`resolve`、`status`、`validate`、`dispatch`、`prompt`、`import-result` 与 `archive`。默认 adapter 是 Manual Adapter：它生成可交给任意 Agent 的任务包和可复制提示词。具体用法见 [快速上手](03-guides/quickstart.md)。
+
+`archive` 会把模板支持的 `ADDED / MODIFIED / REMOVED Requirements` 合并进同名 System Spec，生成同步报告并保留审计历史。重复新增、修改/删除不存在的 requirement 会拒绝归档，避免静默覆盖。
