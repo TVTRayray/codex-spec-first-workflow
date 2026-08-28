@@ -1,0 +1,9 @@
+task_id: <task-id>
+lease_id: <lease-id>
+outcome: completed # completed | blocked | needs_decision
+summary: <what changed or was learned>
+evidence:
+  changed_files: []
+  test_results: []
+unresolved_issues: []
+requested_transition: reviewing

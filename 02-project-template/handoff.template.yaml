@@ -1,0 +1,20 @@
+task_id: <task-id>
+change_id: <change-id>
+role: implementer
+target_spec: spec-01
+adapter: manual
+lease_id: <lease-id>
+
+inputs:
+  - proposal.md
+  - specs/<domain>.md
+  - tasks.md
+allowed_paths:
+  - src/**
+  - tests/**
+expected_outputs:
+  - completion_report
+  - test_report
+test_commands: []
+next_on_success: reviewing
+subagents: forbidden

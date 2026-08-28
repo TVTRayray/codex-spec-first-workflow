@@ -1,58 +1,40 @@
-# Spec Template
+# Delta Spec: <domain>
 
-## 基本信息
+> Change: `<change-id>`
+> Status: `draft`
 
-- Spec ID：
-- 标题：
-- 当前状态：`todo`
-- 关联阶段：
+## ADDED Requirements
 
-## 背景与目标
+### Requirement: <name>
 
--
+系统必须（MUST）……
 
-## 用户故事 / 成功标准
+#### Scenario: <name>
 
-- 作为：
-- 我希望：
-- 从而：
+- **GIVEN**
+- **WHEN**
+- **THEN**
 
-成功标准：
+## MODIFIED Requirements
 
-- [ ] 
+### Requirement: <existing name>
 
-## 非目标
+现有行为：……
+变更后行为：……
 
-- 
+#### Scenario: <name>
 
-## 接口与契约
+- **GIVEN**
+- **WHEN**
+- **THEN**
 
-- 输入：
-- 输出：
-- IPC / API：
-- 异常 / 错误返回：
+## REMOVED Requirements
 
-## 数据与状态变化
+### Requirement: <name>
 
-- 新增状态：
-- 变更状态：
-- 持久化影响：
+移除原因与兼容/迁移策略：
 
-## 边界与失败场景
+## Non-goals and Risks
 
-- 
-
-## 实施要求
-
-- 
-
-## 测试点
-
-- [ ] 
-
-## 完成定义
-
-- [ ] 功能符合本 spec
-- [ ] 测试已补齐或有说明
-- [ ] 文档状态已更新
-- [ ] 可进入 QA
+- 非目标：
+- 风险与待决事项：

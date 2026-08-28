@@ -1,0 +1,15 @@
+change_id: <change-id>
+state: draft
+created_at: <ISO-8601>
+updated_at: <ISO-8601>
+
+specs:
+  - id: spec-01
+    title: <title>
+    state: todo
+    depends_on: []
+    qa_attempts: 0
+    qa_report: null
+
+leases: []
+history: []

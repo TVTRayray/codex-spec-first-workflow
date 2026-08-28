@@ -1,41 +1,20 @@
-# Master Plan Template
+# Manual Dashboard Template (Optional)
 
-## 项目摘要
+> SpecFlow 的权威状态在 `.specflow/state.yaml` 与各 `changes/<id>/state.yaml`。本文件仅为没有 runtime 时的人类可读摘要，不得作为第二份可写状态源。
 
-- 项目名称：
-- 当前目标：
-- 当前负责人：
+## Active Change
 
-## 当前阶段
+- Change ID:
+- State:
+- Current spec:
+- Assigned role / lease:
+- Last QA result:
+- Escalation needed:
 
-- 阶段名称：
-- 阶段目标：
-- 当前活跃 Spec：
+## Recent Decisions
 
-## Backlog
+- Date — decision — rationale
 
-- [ ] 
+## Risks / Blockers
 
-## In Progress
-
-- [ ] 
-
-## Blocked
-
-- [ ] 
-
-## Done
-
-- [x] 
-
-## 决策记录
-
-- 日期：
-  - 决策：
-  - 原因：
-
-## 风险记录
-
-- 风险：
-  - 影响：
-  - 缓解方案：
+- Risk or blocker — owner — next decision

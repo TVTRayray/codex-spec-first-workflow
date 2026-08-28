@@ -74,4 +74,10 @@ proposal → delta specs → design / tasks → implementation → QA → archiv
 2. **半自动交接**：用户选择目标 adapter；runtime 创建上下文与命令。
 3. **全自动交接**：adapter 能可靠启动工具、收集结果并回传 runtime。
 
+### Herdr adapter
+
+当配置将 role 路由到 `herdr` 且 runtime 运行在 `HERDR_ENV=1` 的 Herdr pane 中时，adapter 可以创建兄弟 pane、主动启动受支持的 Agent，并发送任务包提示词。Herdr 不可用或启动失败时必须降级为 Manual Adapter，不能阻断协议状态流转。
+
+由于 Herdr 对后台会话和权限界面可能懒加载，adapter 必须提供主动探查/监控，并把 Agent 状态写入 handoff 和 history。`blocked` 状态只表示需要人工检查；权限批准必须经过明确的人类确认后才能注入按键，adapter 不得自动批准未知命令或权限请求。
+
 三种模式的工件、状态机与安全规则完全相同。
