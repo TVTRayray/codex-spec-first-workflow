@@ -9,6 +9,7 @@
 | `workflow` | 变更模型与人工批准状态 | 使用 `delta_spec`，批准计划和归档 |
 | `artifacts` | 各阶段必须存在的工件 | 实施前要求 proposal、Delta Spec、tasks |
 | `execution` | 串/并行、活跃 change、lease 时长和 runtime 模式 | 一个活跃 change、spec 串行；其余 worker 仅可为只读辅助任务 |
+| `quality.test_commands` | 写入 Implementer 任务包的项目测试命令 | 填入项目实际可运行的命令 |
 | `quality.auto_repair` | 哪些 QA 结论可自动修复、最大次数 | 只处理普通缺陷，最多 2 次 |
 | `agents` / `routing` | 角色到 adapter 的映射 | Planner、Implementer、Reviewer 分离 |
 | `herdr` | Herdr pane、Agent kind 和启动超时 | 仅在 `HERDR_ENV=1` 时启用 |

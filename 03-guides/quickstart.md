@@ -31,7 +31,7 @@ node /path/to/specflow-protocol-kit/dist/cli.js init .
 创建 change：
 
 ```bash
-node /path/to/specflow-protocol-kit/dist/cli.js new add-team-permissions --prd docs/prd.md --prd docs/admin-prd.md
+node /path/to/specflow-protocol-kit/dist/cli.js new add-team-permissions --prd docs/prd.md --prd docs/admin-prd.md --label security
 ```
 
 Planner 创建或完善 proposal、Delta Specs、tasks，以及必要时的 design。然后由 runtime/operator 登记 Planner 拆出的 spec 并提交计划：
@@ -71,7 +71,7 @@ Herdr 会话可能懒加载，运行时可主动探查并记录状态：
 node /path/to/specflow-protocol-kit/dist/cli.js monitor add-team-permissions <task-id>
 ```
 
-若返回 `blocked`，先在 Herdr 中检查权限请求：
+Herdr 启动后 runtime 会先等待 Agent 进入 `idle` 再发送任务，避免会话懒加载时丢失 prompt。若返回 `blocked`，先在 Herdr 中检查权限请求：
 
 ```bash
 herdr agent read <agent-name>
@@ -114,7 +114,14 @@ node /path/to/specflow-protocol-kit/dist/cli.js validate add-team-permissions
 node /path/to/specflow-protocol-kit/dist/cli.js archive add-team-permissions
 ```
 
-归档前保留人工批准点。v0.1 会将每个 Delta Spec 中模板支持的 `ADDED / MODIFIED / REMOVED Requirements` 合并到同名的 `.specflow/system-specs/<domain>.md`，生成 `sync_report`，再把完整 change 移到 `.specflow/history/`。若新增重复 requirement，或修改/删除不存在的 requirement，归档会失败且不移动 change；`sync_report` 是归档产物，不是归档前置条件。
+归档前必须先填写 change 下的 `test_report.md`，并保留人工批准点。若需要只读调查，可由 orchestrator 派发：
+
+```bash
+node /path/to/specflow-protocol-kit/dist/cli.js dispatch-subagent add-team-permissions codebase_researcher --task "分析权限模块调用关系"
+node /path/to/specflow-protocol-kit/dist/cli.js prompt add-team-permissions <subagent-task-id>
+```
+
+Subagent 只能读取输入工件并返回分析结果，不改变主 change 状态。v0.1 会将每个 Delta Spec 中模板支持的 `ADDED / MODIFIED / REMOVED Requirements` 合并到同名的 `.specflow/system-specs/<domain>.md`，生成 `sync_report`，再把完整 change 移到 `.specflow/history/`。若新增重复 requirement，或修改/删除不存在的 requirement，归档会失败且不移动 change；`sync_report` 是归档产物，不是归档前置条件。
 
 ## 用户真正需要处理的事
 

@@ -53,8 +53,8 @@ proposal → delta specs → design / tasks → implementation → QA → archiv
 执行者完成后写 `handoffs/<task-id>.result.yaml`：
 
 - `outcome`: `completed`、`blocked` 或 `needs_decision`
-- 修改摘要与证据路径
-- 测试命令与结果
+- 修改摘要与证据路径；Implementer 的 `completed` 必须提供 `changed_files`
+- 测试命令与结果；Implementer 的 `completed` 必须提供 `test_results`
 - 未解决问题
 
 ## 权限与租约
@@ -62,7 +62,7 @@ proposal → delta specs → design / tasks → implementation → QA → archiv
 - 每个可写 spec 必须有未过期的 task lease；同一目标同时最多一名 writer。
 - Reviewer 默认只写 review；Researcher 始终只读。
 - runtime 是唯一能创建/释放 lease、推进状态和归档的主体。
-- 发生中断时，lease 到期后才可重新派发，并保留旧交接记录。
+- 发生中断时，lease 到期后才可重新派发，并保留旧交接记录；runtime 必须恢复 lease 创建前的 spec/change 状态，拒绝过期 lease 的迟到结果。
 
 ### 无自动 runtime 的手动模式
 

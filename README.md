@@ -75,4 +75,4 @@ node dist/cli.js init /path/to/your-project
 
 当前命令覆盖 `init`、`new`、`add-spec`、`submit-plan`、`approve`、`resolve`、`status`、`validate`、`dispatch`、`dispatch-subagent`、`monitor`、`approve-agent`、`prompt`、`import-result` 与 `archive`。默认 adapter 是 Manual Adapter：它生成可交给任意 Agent 的任务包和可复制提示词。将 role 路由到 `herdr` 时，运行在 Herdr pane 中的 CLI 会尝试自动创建兄弟 pane、唤起 Agent，并提供主动状态探查和显式权限审批；不在 Herdr 环境中则安全降级为 Manual Adapter。具体用法见 [快速上手](03-guides/quickstart.md)。
 
-`archive` 会把模板支持的 `ADDED / MODIFIED / REMOVED Requirements` 合并进同名 System Spec，生成同步报告并保留审计历史。重复新增、修改/删除不存在的 requirement 会拒绝归档，避免静默覆盖。
+`archive` 会把模板支持的 `ADDED / MODIFIED / REMOVED Requirements` 合并进同名 System Spec，生成同步报告并保留审计历史。归档前必须具备每个 spec 的 QA 报告和已填写的 `test_report.md`；视觉变更还必须完成 Design Conformance。重复新增、修改/删除不存在的 requirement 会拒绝归档，避免静默覆盖。
