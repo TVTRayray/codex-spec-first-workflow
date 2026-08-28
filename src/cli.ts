@@ -137,6 +137,18 @@ async function herdrCommand(args: string[], project: string): Promise<any> {
   return parse(stdout);
 }
 
+async function startHerdrAgent(args: string[], project: string): Promise<any> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try { return await herdrCommand(args, project); }
+    catch (error) {
+      lastError = error;
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  throw lastError;
+}
+
 function herdrEnabled(): boolean {
   return process.env.HERDR_ENV === "1";
 }
@@ -575,7 +587,9 @@ async function commandDispatch(changeId: string, role: Role, specId?: string): P
         if (!paneId) fail("Herdr did not return a pane id.");
         const agentName = `${role}-${taskId}`.slice(0, 32).replace(/[^a-z0-9_-]/g, "-");
         const kind = config.herdr?.kind?.[role] ?? "codex";
-        await herdrCommand(["agent", "start", agentName, "--kind", kind, "--pane", paneId, "--timeout", String(config.herdr?.start_timeout_ms ?? 30_000)], process.cwd());
+        const startTimeout = String(config.herdr?.start_timeout_ms ?? 30_000);
+        await startHerdrAgent(["agent", "start", agentName, "--kind", kind, "--pane", paneId, "--timeout", startTimeout], process.cwd());
+        await herdrCommand(["agent", "wait", agentName, "--until", "idle", "--timeout", startTimeout], process.cwd());
         await herdrCommand(["agent", "prompt", agentName, taskPrompt(task)], process.cwd());
         task.runtime = { provider: "herdr", agent_name: agentName, pane_id: paneId, state: "working" };
         record(change, "herdr_agent_started", `${agentName}:${paneId}`);
