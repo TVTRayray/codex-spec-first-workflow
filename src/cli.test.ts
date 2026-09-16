@@ -86,8 +86,16 @@ test("runs an implementer and reviewer handoff through QA pass and archive", asy
     await run(project, "archive", "add-theme");
     const history = await readdir(join(project, ".specflow", "history"));
     assert.equal(history.length, 1);
-    const archived = await readFile(join(project, ".specflow", "history", history[0]!, "sync_report.md"), "utf8");
+    const archiveDir = join(project, ".specflow", "history", history[0]!);
+    const archived = await readFile(join(archiveDir, "sync_report.md"), "utf8");
     assert.match(archived, /ADDED Theme Selection/);
+    const archivedState = parse(await readFile(join(archiveDir, "state.yaml"), "utf8")) as { state: string; history: Array<{ event: string; detail?: string }> };
+    assert.equal(archivedState.state, "archived");
+    const archiveEvent = archivedState.history.at(-1);
+    assert.equal(archiveEvent?.event, "archive_completed");
+    assert.equal(archiveEvent?.detail, "Merged 1 Delta Spec file(s).");
+    const projectState = parse(await readFile(join(project, ".specflow", "state.yaml"), "utf8")) as { active_changes: unknown[] };
+    assert.deepEqual(projectState.active_changes, []);
     const systemSpec = await readFile(join(project, ".specflow", "system-specs", "theme-toggle.md"), "utf8");
     assert.match(systemSpec, /### Requirement: Theme Selection/);
   } finally {

@@ -786,6 +786,10 @@ async function commandArchive(changeId: string): Promise<void> {
   for (const plan of plans) await writeFile(join(systemSpecs, `${plan.domain}.md`), plan.output, "utf8");
   const report = ["# Sync Report", "", ...plans.flatMap((plan) => plan.actions.length ? [`## ${plan.domain}`, ...plan.actions.map((action) => `- ${action}`), ""] : [`## ${plan.domain}`, "- No recognized Delta Spec requirements.", ""])].join("\n");
   await writeFile(join(source, "sync_report.md"), report, "utf8");
+  change.state = "archived";
+  record(change, "archive_completed", `Merged ${plans.length} Delta Spec file(s).`);
+  change.updated_at = now();
+  await writeYaml(join(source, "state.yaml"), change);
   await rename(source, target);
   await updateProjectIndex();
   console.log(`Archived ${changeId} to ${relative(process.cwd(), target)} and merged ${plans.length} Delta Spec file(s).`);
