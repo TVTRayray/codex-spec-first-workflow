@@ -22,6 +22,7 @@ test("initializes and advances a planned change to a ready spec", async () => {
     await run(project, "new", "add-theme", "--prd", "docs/prd.md");
     await assert.rejects(() => run(project, "new", "another-change"), /max_active_changes/);
     await run(project, "add-spec", "add-theme", "theme-toggle", "Theme toggle");
+    await writeFile(join(project, ".specflow", "changes", "add-theme", "specs", "theme-toggle.md"), "# Delta Spec: theme-toggle\n\n## ADDED Requirements\n\n### Requirement: Theme Selection\n\nThe system MUST allow theme selection.\n");
     await run(project, "submit-plan", "add-theme");
     await run(project, "approve", "add-theme");
     const state = parse(await readFile(join(project, ".specflow", "changes", "add-theme", "state.yaml"), "utf8")) as { state: string; specs: Array<{ state: string }> };
@@ -83,6 +84,10 @@ test("runs an implementer and reviewer handoff through QA pass and archive", asy
     await assert.rejects(() => run(project, "validate", "add-theme"), /template placeholders/);
     await assert.rejects(() => run(project, "archive", "add-theme"), /template placeholders/);
     await writeFile(join(project, ".specflow", "changes", "add-theme", "test_report.md"), "# Test Report\n\n## Commands\n\n- npm test\n\n## Results\n\n- 5 passed\n");
+    await writeFile(join(project, ".specflow", "changes", "add-theme", "specs", "theme-toggle.md"), "# Delta Spec: theme-toggle\n\n## Requirements\n\n### Requirement: Theme Selection\n\nThe system MUST allow theme selection.\n");
+    await assert.rejects(() => run(project, "validate", "add-theme"), /no recognized Delta Spec requirements/);
+    await assert.rejects(() => run(project, "archive", "add-theme"), /no recognized Delta Spec requirements/);
+    await writeFile(join(project, ".specflow", "changes", "add-theme", "specs", "theme-toggle.md"), "# Delta Spec: theme-toggle\n\n## ADDED Requirements\n\n### Requirement: Theme Selection\n\nThe system MUST allow theme selection.\n\n#### Scenario: Toggle\n\n- **GIVEN** a user\n- **WHEN** the user changes theme\n- **THEN** the preference is saved.\n");
     await run(project, "archive", "add-theme");
     const history = await readdir(join(project, ".specflow", "history"));
     assert.equal(history.length, 1);
@@ -240,6 +245,69 @@ test("applies label route overrides", async () => {
     assert.ok(plannerFile);
     const planner = parse(await readFile(join(handoffDir, plannerFile), "utf8")) as { adapter: string };
     assert.equal(planner.adapter, "manual-security");
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test("imports a matching result after its lease expires", async () => {
+  const project = await mkdtemp(join(tmpdir(), "specflow-test-"));
+  try {
+    await run(process.cwd(), "init", project);
+    await run(project, "new", "late-result");
+    await run(project, "add-spec", "late-result", "runtime", "Runtime");
+    await run(project, "submit-plan", "late-result");
+    await run(project, "approve", "late-result");
+    await run(project, "dispatch", "late-result", "implementer", "--spec", "runtime");
+
+    const changeDir = join(project, ".specflow", "changes", "late-result");
+    const statePath = join(changeDir, "state.yaml");
+    const handoffFile = (await readdir(join(changeDir, "handoffs"))).find((file) => file.startsWith("implementer-") && file.endsWith(".yaml"));
+    assert.ok(handoffFile);
+    const task = parse(await readFile(join(changeDir, "handoffs", handoffFile), "utf8")) as { task_id: string; lease_id: string };
+    const state = parse(await readFile(statePath, "utf8")) as any;
+    state.leases[0].expires_at = "2000-01-01T00:00:00.000Z";
+    await writeFile(statePath, stringify(state));
+    const resultPath = join(project, "late-result.yaml");
+    await writeFile(resultPath, stringify({ task_id: task.task_id, lease_id: task.lease_id, outcome: "completed", evidence: { changed_files: ["src/runtime.ts"], test_results: ["npm test: passed"] } }));
+
+    await run(project, "import-result", "late-result", task.task_id, resultPath);
+    const imported = parse(await readFile(statePath, "utf8")) as { state: string; leases: unknown[]; history: Array<{ event: string }> };
+    assert.equal(imported.state, "reviewing");
+    assert.equal(imported.leases.length, 0);
+    assert.ok(imported.history.some((event) => event.event === "late_result_imported"));
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test("rejects an expired result after replacement work starts", async () => {
+  const project = await mkdtemp(join(tmpdir(), "specflow-test-"));
+  try {
+    await run(process.cwd(), "init", project);
+    await run(project, "new", "replaced-result");
+    await run(project, "add-spec", "replaced-result", "runtime", "Runtime");
+    await run(project, "submit-plan", "replaced-result");
+    await run(project, "approve", "replaced-result");
+    await run(project, "dispatch", "replaced-result", "implementer", "--spec", "runtime");
+
+    const changeDir = join(project, ".specflow", "changes", "replaced-result");
+    const statePath = join(changeDir, "state.yaml");
+    const handoffDir = join(changeDir, "handoffs");
+    const oldFile = (await readdir(handoffDir)).find((file) => file.startsWith("implementer-") && file.endsWith(".yaml"));
+    assert.ok(oldFile);
+    const oldTask = parse(await readFile(join(handoffDir, oldFile), "utf8")) as { task_id: string; lease_id: string };
+    const state = parse(await readFile(statePath, "utf8")) as any;
+    state.leases[0].expires_at = "2000-01-01T00:00:00.000Z";
+    await writeFile(statePath, stringify(state));
+    await run(project, "dispatch", "replaced-result", "implementer", "--spec", "runtime");
+    const resultPath = join(project, "stale-result.yaml");
+    await writeFile(resultPath, stringify({ task_id: oldTask.task_id, lease_id: oldTask.lease_id, outcome: "completed", evidence: { changed_files: ["src/runtime.ts"], test_results: ["npm test: passed"] } }));
+
+    await assert.rejects(() => run(project, "import-result", "replaced-result", oldTask.task_id, resultPath), /Lease is no longer active/);
+    const current = parse(await readFile(statePath, "utf8")) as { leases: Array<{ task_id: string }> };
+    assert.equal(current.leases.length, 1);
+    assert.notEqual(current.leases[0]?.task_id, oldTask.task_id);
   } finally {
     await rm(project, { recursive: true, force: true });
   }

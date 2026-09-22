@@ -334,6 +334,10 @@ function parseDelta(markdown: string): Delta {
   };
 }
 
+function hasDeltaRequirements(delta: Delta): boolean {
+  return delta.added.length + delta.modified.length + delta.removed.length > 0;
+}
+
 function parseSystemRequirements(markdown: string): Map<string, Requirement> {
   const requirements = new Map<string, Requirement>();
   for (const match of markdown.matchAll(/^### Requirement: (.+?)\s*$([\s\S]*?)(?=^### Requirement:|(?![\s\S]))/gm)) {
@@ -348,11 +352,11 @@ function renderSystemSpec(domain: string, requirements: Map<string, Requirement>
   return `# System Spec: ${domain}\n\n## Requirements\n\n${entries}\n`;
 }
 
-function expireLeases(change: Change): void {
+function expireLeases(change: Change, preserveLeaseId?: string): void {
   const timestamp = Date.now();
-  const expired = change.leases.filter((lease) => Date.parse(lease.expires_at) <= timestamp);
+  const expired = change.leases.filter((lease) => lease.id !== preserveLeaseId && Date.parse(lease.expires_at) <= timestamp);
   if (!expired.length) return;
-  change.leases = change.leases.filter((lease) => Date.parse(lease.expires_at) > timestamp);
+  change.leases = change.leases.filter((lease) => lease.id === preserveLeaseId || Date.parse(lease.expires_at) > timestamp);
   for (const lease of expired) {
     if (lease.spec_id && lease.previous_spec_state) {
       const spec = change.specs.find((item) => item.id === lease.spec_id);
@@ -500,6 +504,9 @@ async function commandValidate(changeId?: string): Promise<void> {
     const change = await readChange(id);
     if (!change.change_id || !change.state || !Array.isArray(change.specs)) errors.push(`${id}: malformed state.yaml`);
     for (const spec of change.specs) for (const dependency of spec.depends_on) if (!change.specs.some((other) => other.id === dependency)) errors.push(`${id}/${spec.id}: missing dependency ${dependency}`);
+    for (const file of (await readdir(join(changeDir(id), "specs"))).filter((entry) => entry.endsWith(".md"))) {
+      if (!hasDeltaRequirements(parseDelta(await readFile(join(changeDir(id), "specs", file), "utf8")))) errors.push(`${id}/${file}: no recognized Delta Spec requirements; use ADDED, MODIFIED, or REMOVED Requirements sections`);
+    }
     if (["implementing", "reviewing", "repairing"].includes(change.state) && !change.leases.length && change.state === "implementing") errors.push(`${id}: implementing without a lease`);
     if (change.state === "awaiting_plan_approval") for (const required of config.artifacts?.required_before_implementation ?? []) if (required === "delta_spec" ? !(await readdir(join(changeDir(id), "specs"))).length : !(await exists(join(changeDir(id), `${required}.md`)))) errors.push(`${id}: missing required artifact ${required}`);
     if (change.state === "awaiting_archive_approval") errors.push(...(await archiveArtifactErrors(change, config, changeDir(id))).map((error) => `${id}: ${error}`));
@@ -677,17 +684,21 @@ async function commandApproveAgent(changeId: string, taskId: string, key: string
 async function commandImportResult(changeId: string, taskId: string, resultPath: string): Promise<void> {
   const config = await readConfig();
   const change = await readChange(changeId);
-  const leasesBeforeExpiry = change.leases.length;
-  expireLeases(change);
   const task = await readYaml<Task>(join(changeDir(changeId), "handoffs", `${taskId}.yaml`));
   const result = await readYaml<Result>(resolve(resultPath));
   if (result.task_id !== taskId || result.lease_id !== task.lease_id) fail("Result task_id or lease_id does not match the handoff.");
   validateResult(task, result);
-  const leaseIndex = change.leases.findIndex((lease) => lease.id === task.lease_id);
+  const leasesBeforeExpiry = change.leases.length;
+  const matchingLease = change.leases.find((lease) => lease.id === task.lease_id);
+  expireLeases(change, matchingLease?.id);
+  let leaseIndex = change.leases.findIndex((lease) => lease.id === task.lease_id);
   if (leaseIndex < 0) {
     if (change.leases.length !== leasesBeforeExpiry) await saveChange(change);
     fail("Lease is no longer active.");
   }
+  const conflictingLease = change.leases.find((lease) => lease.id !== task.lease_id && (task.target_spec ? lease.spec_id === task.target_spec : lease.role === task.role));
+  if (conflictingLease) fail(`Cannot import result while newer conflicting lease ${conflictingLease.id} is active.`);
+  if (Date.parse(matchingLease!.expires_at) <= Date.now()) record(change, "late_result_imported", `${task.lease_id}:${taskId}`);
   if (result.outcome === "blocked") { change.resume_state = change.state; change.state = "blocked"; record(change, "task_blocked", result.summary); }
   else if (result.outcome === "needs_decision") { change.resume_state = change.state; change.state = "decision_required"; record(change, "decision_required", result.summary); }
   else if (task.role === "implementer") {
@@ -716,6 +727,7 @@ async function commandImportResult(changeId: string, taskId: string, resultPath:
     } else { change.resume_state = change.state; change.state = "decision_required"; record(change, "decision_required", `${spec.id}:${result.category ?? "review_escalation"}`); }
   } else { change.state = "awaiting_plan_approval"; record(change, "plan_submitted"); }
   await cp(resolve(resultPath), join(changeDir(changeId), "handoffs", `${taskId}.result.yaml`));
+  leaseIndex = change.leases.findIndex((lease) => lease.id === task.lease_id);
   change.leases.splice(leaseIndex, 1);
   const nextSpec = task.role === "reviewer" && config.execution?.auto_start_next_ready_spec && change.state === "ready"
     ? change.specs.find((item) => item.state === "ready")
@@ -763,6 +775,7 @@ async function commandArchive(changeId: string): Promise<void> {
   for (const file of (await readdir(join(source, "specs"))).filter((entry) => entry.endsWith(".md"))) {
     const domain = file.slice(0, -3);
     const delta = parseDelta(await readFile(join(source, "specs", file), "utf8"));
+    if (!hasDeltaRequirements(delta)) fail(`Cannot archive ${domain}: no recognized Delta Spec requirements; use ADDED, MODIFIED, or REMOVED Requirements sections.`);
     const targetPath = join(systemSpecs, file);
     const requirements = (await exists(targetPath)) ? parseSystemRequirements(await readFile(targetPath, "utf8")) : new Map<string, Requirement>();
     const actions: string[] = [];
