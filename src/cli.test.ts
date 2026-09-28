@@ -312,3 +312,104 @@ test("rejects an expired result after replacement work starts", async () => {
     await rm(project, { recursive: true, force: true });
   }
 });
+
+test("reopens one passed spec with audit history, guards, and a new QA cycle", async () => {
+  const project = await mkdtemp(join(tmpdir(), "specflow-test-"));
+  try {
+    await run(process.cwd(), "init", project);
+    await run(project, "new", "reopen-flow");
+    const dir = join(project, ".specflow", "changes", "reopen-flow");
+    for (const name of ["first", "second"]) {
+      await run(project, "add-spec", "reopen-flow", name, name);
+      await writeFile(join(dir, "specs", `${name}.md`), `# Delta Spec: ${name}\n\n## ADDED Requirements\n\n### Requirement: ${name}\n\nThe system MUST support ${name}.\n`);
+      await writeFile(join(dir, "reviews", `${name}-old.md`), "# QA Report\n\npass\n");
+    }
+    await run(project, "submit-plan", "reopen-flow");
+    await run(project, "approve", "reopen-flow");
+    const statePath = join(dir, "state.yaml");
+    const indexPath = join(project, ".specflow", "state.yaml");
+    const state = parse(await readFile(statePath, "utf8")) as {
+      state: string; updated_at: string; leases: unknown[];
+      specs: Array<{ id: string; state: string; qa_attempts: number; qa_report?: string | null; updated_at?: string }>;
+      history: Array<{ event: string; detail?: string }>;
+    };
+    state.state = "awaiting_archive_approval";
+    for (const spec of state.specs) {
+      spec.state = "qa_passed";
+      spec.qa_report = `reviews/${spec.id}-old.md`;
+      spec.qa_attempts = spec.id === "first" ? 2 : 1;
+    }
+    await writeFile(statePath, stringify(state));
+    const unchanged = async (args: string[], error: RegExp) => {
+      const before = await readFile(statePath);
+      const indexBefore = await readFile(indexPath);
+      const filesBefore = await readdir(join(dir, "reviews"));
+      await assert.rejects(() => run(project, "reopen-qa", "reopen-flow", ...args), error);
+      assert.deepEqual(await readFile(statePath), before);
+      assert.deepEqual(await readFile(indexPath), indexBefore);
+      assert.deepEqual(await readdir(join(dir, "reviews")), filesBefore);
+    };
+    await unchanged(["--spec", "first", "--reason", "new defect"], /--confirm/);
+    await unchanged(["--spec", "first", "--reason", "  ", "--confirm"], /nonempty --reason/);
+    await unchanged(["--spec", "first", "--reason", "--confirm"], /nonempty --reason/);
+    await unchanged(["--reason", "defect", "--confirm"], /requires --spec/);
+    await unchanged(["--spec", "missing", "--reason", "defect", "--confirm"], /Unknown spec/);
+    state.specs[0]!.state = "reviewing";
+    await writeFile(statePath, stringify(state));
+    await unchanged(["--spec", "first", "--reason", "defect", "--confirm"], /state reviewing/);
+    state.specs[0]!.state = "qa_passed";
+    state.leases = [{ id: "active" }];
+    await writeFile(statePath, stringify(state));
+    await unchanged(["--spec", "first", "--reason", "defect", "--confirm"], /leases are active/);
+    state.leases = [];
+    state.state = "ready";
+    await writeFile(statePath, stringify(state));
+    await unchanged(["--spec", "first", "--reason", "defect", "--confirm"], /state ready/);
+    state.state = "awaiting_archive_approval";
+    await writeFile(statePath, stringify(state));
+
+    await run(project, "reopen-qa", "reopen-flow", "--spec", "first", "--reason", "  regression found  ", "--confirm");
+    const reopened = parse(await readFile(statePath, "utf8")) as typeof state;
+    assert.equal(reopened.state, "repairing");
+    assert.notEqual(reopened.updated_at, state.updated_at);
+    assert.equal(reopened.specs[0]?.state, "repairing");
+    assert.match(reopened.specs[0]?.updated_at ?? "", /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(reopened.specs[0]?.qa_attempts, 2);
+    assert.equal(reopened.specs[0]?.qa_report, null);
+    assert.deepEqual(reopened.specs[1], state.specs[1]);
+    assert.equal(await readFile(join(dir, "reviews", "first-old.md"), "utf8"), "# QA Report\n\npass\n");
+    assert.deepEqual(JSON.parse(reopened.history.at(-1)?.detail ?? ""), { spec: "first", reason: "regression found", previous_qa_report: "reviews/first-old.md" });
+    assert.equal(reopened.history.at(-1)?.event, "qa_reopened");
+    assert.deepEqual(reopened.history.slice(0, -1), state.history);
+    const index = parse(await readFile(indexPath, "utf8")) as { active_changes: Array<{ state: string }> };
+    assert.equal(index.active_changes[0]?.state, "repairing");
+    await run(project, "validate", "reopen-flow");
+    await assert.rejects(() => run(project, "archive", "reopen-flow"), /Cannot archive change in state repairing/);
+    await unchanged(["--spec", "first", "--reason", "again", "--confirm"], /state repairing/);
+
+    await run(project, "dispatch", "reopen-flow", "implementer", "--spec", "first");
+    const handoffDir = join(dir, "handoffs");
+    const implementationFile = (await readdir(handoffDir)).find((file) => file.startsWith("implementer-") && file.endsWith(".yaml"));
+    assert.ok(implementationFile);
+    const implementation = parse(await readFile(join(handoffDir, implementationFile), "utf8")) as { task_id: string; lease_id: string };
+    const resultPath = join(project, "result.yaml");
+    await writeFile(resultPath, stringify({ task_id: implementation.task_id, lease_id: implementation.lease_id, outcome: "completed", evidence: { changed_files: ["src/first.ts"], test_results: ["npm test: passed"] } }));
+    await run(project, "import-result", "reopen-flow", implementation.task_id, resultPath);
+    await run(project, "dispatch", "reopen-flow", "reviewer", "--spec", "first");
+    const reviewerFile = (await readdir(handoffDir)).find((file) => file.startsWith("reviewer-") && file.endsWith(".yaml"));
+    assert.ok(reviewerFile);
+    const reviewer = parse(await readFile(join(handoffDir, reviewerFile), "utf8")) as { task_id: string; lease_id: string };
+    await writeFile(join(dir, "reviews", `${reviewer.task_id}.md`), "# QA Report\n\npass\n");
+    await writeFile(resultPath, stringify({ task_id: reviewer.task_id, lease_id: reviewer.lease_id, outcome: "completed", verdict: "pass" }));
+    await run(project, "import-result", "reopen-flow", reviewer.task_id, resultPath);
+    const finished = parse(await readFile(statePath, "utf8")) as typeof state;
+    assert.equal(finished.state, "awaiting_archive_approval");
+    assert.equal(finished.specs[0]?.qa_report, `reviews/${reviewer.task_id}.md`);
+    assert.equal(finished.specs[0]?.qa_attempts, 2);
+    assert.deepEqual(finished.specs[1], state.specs[1]);
+    await writeFile(join(dir, "test_report.md"), "# Test Report\n\n## Commands\n\n- npm test\n\n## Results\n\n- passed\n");
+    await run(project, "validate", "reopen-flow");
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});

@@ -32,6 +32,7 @@ interface SpecItem {
   depends_on: string[];
   qa_attempts: number;
   qa_report?: string | null;
+  updated_at?: string;
 }
 
 interface Lease {
@@ -392,6 +393,7 @@ Usage:
   specflow validate [change-id]
   specflow approve <change-id>
   specflow resolve <change-id> <previous|planning|ready|repairing|cancelled> [--reason <text>]
+  specflow reopen-qa <change-id> --spec <spec-id> --reason <text> --confirm
   specflow dispatch <change-id> <planner|implementer|reviewer> [--spec <spec-id>]
   specflow dispatch-subagent <change-id> <codebase_researcher|test_auditor|independent_reviewer> [--spec <spec-id>] [--task <text>]
   specflow monitor <change-id> <task-id> [--wait] [--timeout <ms>]
@@ -540,6 +542,33 @@ async function commandResolve(changeId: string, target: string, reason: string):
   record(change, "human_resolution", `${resolvedTarget}${reason ? `: ${reason}` : ""}`);
   await saveChange(change);
   console.log(`Resolved ${changeId} to ${change.state}.`);
+}
+
+async function commandReopenQa(changeId: string, specId: string, reason: string, confirmed: boolean): Promise<void> {
+  if (!confirmed) fail("Reopening QA requires --confirm.");
+  if (!reason.trim()) fail("Reopening QA requires a nonempty --reason.");
+  if (!specId) fail("Reopening QA requires --spec <spec-id>.");
+  const change = await readChange(changeId);
+  if (change.state !== "awaiting_archive_approval") fail(`Cannot reopen QA in state ${change.state}.`);
+  const spec = getSpec(change, specId);
+  if (spec.state !== "qa_passed") fail(`Cannot reopen QA for spec ${specId} in state ${spec.state}.`);
+  if (change.leases.length) fail("Cannot reopen QA while leases are active.");
+  record(change, "qa_reopened", JSON.stringify({ spec: specId, reason: reason.trim(), previous_qa_report: spec.qa_report ?? null }));
+  spec.qa_report = null;
+  spec.state = "repairing";
+  change.state = "repairing";
+  spec.updated_at = now();
+  change.updated_at = spec.updated_at;
+  const statePath = join(changeDir(changeId), "state.yaml");
+  const tempPath = `${statePath}.${id("reopen")}.tmp`;
+  try {
+    await writeYaml(tempPath, change);
+    await rename(tempPath, statePath);
+  } finally {
+    await rm(tempPath, { force: true });
+  }
+  await updateProjectIndex();
+  console.log(`Reopened QA for ${specId} in ${changeId}; state is repairing.`);
 }
 
 async function commandDispatch(changeId: string, role: Role, specId?: string): Promise<void> {
@@ -855,6 +884,14 @@ async function main(): Promise<void> {
     return commandApproveAgent(changeId ?? fail("approve-agent requires <change-id>."), taskId ?? fail("approve-agent requires <task-id>."), keyAt >= 0 ? rest[keyAt + 1] ?? "enter" : "enter", rest.includes("--confirm"));
   }
   if (command === "prompt") return commandPrompt(args[0] ?? fail("prompt requires <change-id>."), args[1] ?? fail("prompt requires <task-id>."));
+  if (command === "reopen-qa") {
+    const [changeId, ...rest] = args;
+    const specAt = rest.indexOf("--spec");
+    const reasonAt = rest.indexOf("--reason");
+    const spec = specAt >= 0 ? rest[specAt + 1] : undefined;
+    const reason = reasonAt >= 0 ? rest[reasonAt + 1] : undefined;
+    return commandReopenQa(changeId ?? fail("reopen-qa requires <change-id>."), spec?.startsWith("--") ? "" : spec ?? "", reason?.startsWith("--") ? "" : reason ?? "", rest.includes("--confirm"));
+  }
   if (command === "import-result") return commandImportResult(args[0] ?? fail("import-result requires <change-id>."), args[1] ?? fail("import-result requires <task-id>."), args[2] ?? fail("import-result requires <result.yaml>."));
   if (command === "archive") return commandArchive(args[0] ?? fail("archive requires <change-id>."));
   fail(`Unknown command: ${command}\n\n${usage()}`);

@@ -19,6 +19,8 @@
 
 Agent 不得仅凭聊天结论改变状态；必须提交协议工件，runtime 验证后才能转换状态。
 
+归档批准前的 QA 重开仅由 operator/runtime 执行 `specflow reopen-qa <change-id> --spec <spec-id> --reason <text> --confirm`：change 必须为 `awaiting_archive_approval`、目标 spec 必须为 `qa_passed`、且不得存在任何 lease。仅目标 spec 与 change 转为 `repairing` 并更新 `updated_at`；保留 `qa_attempts`、其他 spec、原 QA 文件和 history。原 `qa_report` 路径记录在 `qa_reopened` 事件中，当前指针清空，直到新的 Reviewer QA 结果导入；随后按普通实现/复审流程推进。拒绝不写状态或索引，重开不代表人工归档批准。
+
 ## Change 工件依赖
 
 ```text

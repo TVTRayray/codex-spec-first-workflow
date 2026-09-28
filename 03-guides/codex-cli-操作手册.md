@@ -31,6 +31,15 @@ routing:
 
 随后由 runtime（或用户）检查 result，释放 lease，并向配置的 Reviewer adapter 派发 QA 工作单。
 
+若所有 spec 已通过 QA、change 正待归档批准，但某个已通过的 spec 需要再修复，operator 明确确认并说明原因：
+
+```bash
+specflow reopen-qa <change-id> --spec <spec-id> --reason "发现回归" --confirm
+specflow dispatch <change-id> implementer --spec <spec-id>
+```
+
+重开要求没有任何 lease；旧 QA 文件和审计历史不删除，原 `qa_report` 指针清空，修复次数不重置。Implementer 完成后照常导入结果、派发 Reviewer 并重新 QA；不自动批准权限或归档。
+
 ## Codex subagent 策略
 
 即使 Codex 具备并行/委派能力，也必须以 `.specflow/config.yaml` 为准。普通 Implementer 与 Reviewer 任务的 `subagents: forbidden` 是硬边界。需要调查时，由 orchestrator 签发只读辅助工作单：
