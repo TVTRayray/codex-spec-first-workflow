@@ -336,6 +336,38 @@ test("returns a spec to ready when its implementer needs a decision, so resolve 
   }
 });
 
+test("resolve to repairing returns a reviewer-escalated spec to the implementer", async () => {
+  const project = await mkdtemp(join(tmpdir(), "specflow-test-"));
+  try {
+    await run(process.cwd(), "init", project);
+    await run(project, "new", "escalate");
+    await run(project, "add-spec", "escalate", "only", "Only");
+    await run(project, "submit-plan", "escalate");
+    await run(project, "approve", "escalate");
+    const changeDir = join(project, ".specflow", "changes", "escalate");
+    const handoffDir = join(changeDir, "handoffs");
+    await run(project, "dispatch", "escalate", "implementer", "--spec", "only");
+    const impl = parse(await readFile(join(handoffDir, (await readdir(handoffDir))[0]!), "utf8")) as { task_id: string; lease_id: string };
+    const implResult = join(project, "impl.yaml");
+    await writeFile(implResult, stringify({ task_id: impl.task_id, lease_id: impl.lease_id, outcome: "completed", evidence: { changed_files: ["src/a.ts"], test_results: ["ok"] } }));
+    await run(project, "import-result", "escalate", impl.task_id, implResult);
+    await run(project, "dispatch", "escalate", "reviewer", "--spec", "only");
+    const reviewerFile = (await readdir(handoffDir)).find((file) => file.startsWith("reviewer-") && !file.endsWith(".result.yaml"))!;
+    const review = parse(await readFile(join(handoffDir, reviewerFile), "utf8")) as { task_id: string; lease_id: string };
+    await writeFile(join(changeDir, "reviews", `${review.task_id}.md`), "# QA Report\n\nescalation\n");
+    const reviewResult = join(project, "review.yaml");
+    await writeFile(reviewResult, stringify({ task_id: review.task_id, lease_id: review.lease_id, outcome: "completed", verdict: "escalation", category: "permission_insufficient" }));
+    await run(project, "import-result", "escalate", review.task_id, reviewResult);
+    await run(project, "resolve", "escalate", "repairing", "--reason", "remove out-of-scope guard");
+    const state = parse(await readFile(join(changeDir, "state.yaml"), "utf8")) as { state: string; specs: Array<{ state: string }> };
+    assert.equal(state.state, "repairing");
+    assert.equal(state.specs[0]?.state, "repairing");
+    await run(project, "dispatch", "escalate", "implementer", "--spec", "only");
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
 test("resolve releases a spec left implementing without a lease", async () => {
   const project = await mkdtemp(join(tmpdir(), "specflow-test-"));
   try {

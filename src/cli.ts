@@ -549,6 +549,15 @@ async function commandResolve(changeId: string, target: string, reason: string):
     }
   }
   if (resolvedTarget === "implementing" && !change.leases.length) resolvedTarget = "ready";
+  if (resolvedTarget === "repairing" && !change.specs.some((spec) => spec.state === "repairing")) {
+    // A human answering a reviewer escalation with "send it back" returns the reviewed spec to its implementer.
+    for (const spec of change.specs) {
+      if (spec.state === "reviewing" && !change.leases.some((lease) => lease.spec_id === spec.id)) {
+        spec.state = "repairing";
+        record(change, "spec_returned_to_implementer", spec.id);
+      }
+    }
+  }
   if (resolvedTarget === "repairing" && !change.specs.some((spec) => spec.state === "repairing")) fail("Cannot resolve to repairing without a spec in repairing state.");
   if (resolvedTarget === "ready" && !change.specs.some((spec) => spec.state === "ready")) transitionToReady(change, config.execution?.sequential_specs ?? true);
   else change.state = resolvedTarget;
