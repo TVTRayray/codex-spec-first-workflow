@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | `workflow` | 变更模型与人工批准状态 | 使用 `delta_spec`，批准计划和归档 |
 | `artifacts` | 各阶段必须存在的工件 | 实施前要求 proposal、Delta Spec、tasks |
-| `execution` | 串/并行、活跃 change、lease 时长和 runtime 模式 | 一个活跃 change、spec 串行；其余 worker 仅可为只读辅助任务 |
+| `execution` | 串/并行、活跃 change、lease 时长、runtime 模式与 implementer 默认可写路径 | 一个活跃 change、spec 串行；其余 worker 仅可为只读辅助任务 |
 | `quality.test_commands` | 写入 Implementer 任务包的项目测试命令 | 填入项目实际可运行的命令 |
 | `quality.auto_repair` | 哪些 QA 结论可自动修复、最大次数 | 只处理普通缺陷，最多 2 次 |
 | `agents` / `routing` | 角色到 adapter 的映射 | Planner、Implementer、Reviewer 分离 |
@@ -62,6 +62,8 @@ runtime 必须拒绝以下配置或执行行为：
 
 这些规则保护的是协议可信度，不属于用户偏好。
 
+`execution.implementer_paths` 是 implementer 任务包的默认 `allowed_paths`（未配置时为 `src/**`、`tests/**`）；`add-spec --path <glob>` 可为单个 spec 指定范围并覆盖默认值。两种情况下 runtime 都会追加当前 change 目录。若 change 的 `design.md` / `ux-design.md` 已填写（不含模板占位符），implementer 与 reviewer 任务包会自动将其列入输入。
+
 `execution.max_parallel_workers` 限制同一 change 的有效 lease 数量；`auto_start_next_ready_spec: true` 时，QA 通过后 runtime 会自动派发下一个已 ready 的 implementer。`routing.overrides` 可按 role 和 change label 选择特殊 adapter，命中规则及最终 route 会写入 history。
 
 当前 runtime 将 subagent 改为 `orchestrator_only`：仅编排器可派发配置允许的只读辅助任务。仍必须保持零 writable paths、深度不超过 1、有限时长，并禁止递归创建。使用 `specflow dispatch-subagent` 派发，结果只写入 handoff，不改变主 change 状态。
@@ -77,6 +79,8 @@ specflow monitor <change-id> <task-id>
 ```
 
 该命令读取 Agent 的实时状态并写入 handoff/runtime 和 change history。需要等待 Agent 进入稳定状态时，在 Herdr 中使用 `herdr agent wait`，再运行 `monitor` 更新审计记录。
+
+`herdr.args.<role>` 可为该角色的 Agent 传入原生启动参数（追加在 `herdr agent start ... --` 之后），例如为 Claude worker 指定 `[--permission-mode, auto]`，减少权限弹窗导致的 `blocked`。必须是字符串列表。
 
 如果状态为 `blocked`，先使用 `herdr agent read <agent-name>` 检查具体权限请求或问题。确认请求安全且在任务允许范围内后，显式批准：
 

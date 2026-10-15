@@ -201,6 +201,64 @@ test("gates visual changes on completed UX evidence", async () => {
   }
 });
 
+test("scopes implementer paths per spec and passes completed design inputs", async () => {
+  const project = await mkdtemp(join(tmpdir(), "specflow-test-"));
+  try {
+    await run(process.cwd(), "init", project);
+    const configPath = join(project, ".specflow", "config.yaml");
+    const config = parse(await readFile(configPath, "utf8")) as { execution: Record<string, unknown> };
+    config.execution.implementer_paths = ["app/**", "e2e/**"];
+    config.execution.sequential_specs = false;
+    await writeFile(configPath, stringify(config));
+    await run(project, "new", "scoped");
+    const changeDir = join(project, ".specflow", "changes", "scoped");
+    await run(project, "add-spec", "scoped", "backend", "Backend", "--path", "server/**", "--path", "Cargo.toml");
+    await run(project, "add-spec", "scoped", "frontend", "Frontend");
+    await writeFile(join(changeDir, "design.md"), "# Design\n\nUse a single store.\n");
+    await run(project, "submit-plan", "scoped");
+    await run(project, "approve", "scoped");
+
+    const handoffDir = join(changeDir, "handoffs");
+    await run(project, "dispatch", "scoped", "implementer", "--spec", "backend");
+    await run(project, "dispatch", "scoped", "implementer", "--spec", "frontend");
+    const tasks = await Promise.all((await readdir(handoffDir)).map(async (file) => parse(await readFile(join(handoffDir, file), "utf8")) as { target_spec: string; allowed_paths: string[]; inputs: string[] }));
+    const backend = tasks.find((task) => task.target_spec === "backend");
+    const frontend = tasks.find((task) => task.target_spec === "frontend");
+    assert.deepEqual(backend?.allowed_paths, ["server/**", "Cargo.toml", ".specflow/changes/scoped/**"]);
+    assert.deepEqual(frontend?.allowed_paths, ["app/**", "e2e/**", ".specflow/changes/scoped/**"]);
+    assert.ok(backend?.inputs.includes("design.md"));
+    assert.ok(!backend?.inputs.includes("ux-design.md"));
+    const state = parse(await readFile(join(changeDir, "state.yaml"), "utf8")) as { specs: Array<{ id: string; paths?: string[] }> };
+    assert.deepEqual(state.specs.find((spec) => spec.id === "backend")?.paths, ["server/**", "Cargo.toml"]);
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test("imports a result written at its canonical handoff path and states the result schema", async () => {
+  const project = await mkdtemp(join(tmpdir(), "specflow-test-"));
+  try {
+    await run(process.cwd(), "init", project);
+    await run(project, "new", "canonical");
+    await run(project, "add-spec", "canonical", "only", "Only");
+    await run(project, "submit-plan", "canonical");
+    await run(project, "approve", "canonical");
+    const handoffDir = join(project, ".specflow", "changes", "canonical", "handoffs");
+    await run(project, "dispatch", "canonical", "implementer", "--spec", "only");
+    const task = parse(await readFile(join(handoffDir, (await readdir(handoffDir))[0]!), "utf8")) as { task_id: string; lease_id: string };
+    const prompt = await run(project, "prompt", "canonical", task.task_id);
+    assert.match(prompt, new RegExp(`lease_id: ${task.lease_id}`));
+    assert.match(prompt, /evidence\.changed_files/);
+    const canonical = join(handoffDir, `${task.task_id}.result.yaml`);
+    await writeFile(canonical, stringify({ task_id: task.task_id, lease_id: task.lease_id, outcome: "completed", evidence: { changed_files: ["src/a.ts"], test_results: ["npm test: passed"] } }));
+    await run(project, "import-result", "canonical", task.task_id, canonical);
+    const state = parse(await readFile(join(project, ".specflow", "changes", "canonical", "state.yaml"), "utf8")) as { state: string };
+    assert.equal(state.state, "reviewing");
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
 test("dispatches a bounded read-only subagent without changing the main flow", async () => {
   const project = await mkdtemp(join(tmpdir(), "specflow-test-"));
   try {

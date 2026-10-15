@@ -25,6 +25,11 @@ execution:
   auto_start_next_ready_spec: true
   lease_minutes: 45
   runtime_mode: managed # managed | operator (human runs the runtime checklist)
+  # Default implementer write scope; `add-spec --path <glob>` overrides it per spec.
+  # The change folder (.specflow/changes/<id>/**) is always appended.
+  implementer_paths:
+    - src/**
+    - tests/**
 
 quality:
   qa_required: true
@@ -56,6 +61,8 @@ herdr:
     planner: codex
     implementer: codex
     reviewer: codex
+  # Native agent arguments passed after `--` to `herdr agent start`, per role.
+  args: {} # e.g. { implementer: [--permission-mode, auto] }
   direction: right
   start_timeout_ms: 30000
 

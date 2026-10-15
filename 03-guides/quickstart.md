@@ -38,7 +38,7 @@ Planner 创建或完善 proposal、Delta Specs、tasks，以及必要时的 desi
 
 ```bash
 node /path/to/specflow-protocol-kit/dist/cli.js add-spec add-team-permissions roles "角色与权限模型"
-node /path/to/specflow-protocol-kit/dist/cli.js add-spec add-team-permissions member-ui "成员管理界面" --depends-on roles
+node /path/to/specflow-protocol-kit/dist/cli.js add-spec add-team-permissions member-ui "成员管理界面" --depends-on roles --path "web/**" --path "e2e/**"
 node /path/to/specflow-protocol-kit/dist/cli.js submit-plan add-team-permissions
 ```
 

@@ -30,6 +30,7 @@ interface SpecItem {
   title: string;
   state: SpecState;
   depends_on: string[];
+  paths?: string[];
   qa_attempts: number;
   qa_report?: string | null;
   updated_at?: string;
@@ -66,12 +67,12 @@ interface RouteOverride {
 
 interface Config {
   artifacts?: { required_before_implementation?: string[]; required_before_archive?: string[] };
-  execution?: { lease_minutes?: number; runtime_mode?: "managed" | "operator"; sequential_specs?: boolean; max_active_changes?: number; max_parallel_workers?: number; auto_start_next_ready_spec?: boolean };
+  execution?: { lease_minutes?: number; runtime_mode?: "managed" | "operator"; sequential_specs?: boolean; max_active_changes?: number; max_parallel_workers?: number; auto_start_next_ready_spec?: boolean; implementer_paths?: string[] };
   quality?: { test_commands?: string[]; auto_repair?: { enabled?: boolean; max_attempts?: number; only_for?: string[]; escalate_for?: string[] } };
   agents?: Record<string, { adapter?: string }>;
   routing?: { planner?: string; implementer?: string; reviewer?: string; overrides?: RouteOverride[] };
   subagents?: { default?: "forbidden" | "orchestrator_only"; allowed_callers?: string[]; allowed_roles?: SubagentRole[]; max_depth?: number; max_concurrency?: number; max_runtime_minutes?: number; writable_paths?: string[]; require_bounded_task?: boolean; can_spawn_subagents?: boolean; adapter?: string };
-  herdr?: { kind?: Partial<Record<Role, string>>; direction?: "right" | "down"; start_timeout_ms?: number };
+  herdr?: { kind?: Partial<Record<Role, string>>; args?: Partial<Record<Role, string[]>>; direction?: "right" | "down"; start_timeout_ms?: number };
 }
 
 interface Task {
@@ -204,6 +205,7 @@ function validateConfig(config: Config): void {
   if (subagents?.default === "orchestrator_only" && !(subagents.allowed_roles ?? []).length) fail("orchestrator_only requires at least one allowed_roles entry.");
   if (subagents?.writable_paths?.length) fail("subagents.writable_paths must be empty.");
   if (subagents?.require_bounded_task === false) fail("subagents.require_bounded_task must remain true.");
+  for (const [role, args] of Object.entries(config.herdr?.args ?? {})) if (!Array.isArray(args) || args.some((arg) => typeof arg !== "string")) fail(`herdr.args.${role} must be a list of strings.`);
 }
 
 async function readConfig(project = process.cwd()): Promise<Config> {
@@ -246,7 +248,7 @@ function record(change: Change, event: string, detail?: string): void {
 function taskPrompt(task: Task): string {
   const inputs = task.inputs.map((input) => `.specflow/changes/${task.change_id}/${input}`).join("、");
   const readOnly = task.role === "subagent" ? "这是只读辅助任务，不得修改任何项目文件、创建 subagent 或推进状态。" : "";
-  return `你正在执行 SpecFlow 工作单。角色：${task.role}${task.subagent_role ? `（${task.subagent_role}）` : ""}。任务包：.specflow/changes/${task.change_id}/handoffs/${task.task_id}.yaml。输入：${inputs}。允许修改：${task.allowed_paths.join("、") || "无"}。${readOnly}禁止创建 subagent。完成后创建 .specflow/changes/${task.change_id}/handoffs/${task.task_id}.result.yaml；reviewer 还必须填写 .specflow/changes/${task.change_id}/reviews/${task.task_id}.md。遇到需求歧义、架构/安全风险或权限外工作时写 needs_decision 并停止。`;
+  return `你正在执行 SpecFlow 工作单。角色：${task.role}${task.subagent_role ? `（${task.subagent_role}）` : ""}。任务包：.specflow/changes/${task.change_id}/handoffs/${task.task_id}.yaml。输入：${inputs}。允许修改：${task.allowed_paths.join("、") || "无"}。${readOnly}禁止创建 subagent。完成后创建 .specflow/changes/${task.change_id}/handoffs/${task.task_id}.result.yaml，字段：task_id: ${task.task_id}、lease_id: ${task.lease_id}、outcome（completed | blocked | needs_decision）、summary、evidence.changed_files、evidence.test_results（implementer completed 时两者必填）、unresolved_issues${task.role === "reviewer" ? "、verdict（pass | repair | escalation）、category（repair/escalation 时必填，取 QA 报告模板中的分类）" : ""}；reviewer 还必须填写 .specflow/changes/${task.change_id}/reviews/${task.task_id}.md。遇到需求歧义、架构/安全风险或权限外工作时写 needs_decision 并停止。`;
 }
 
 function getSpec(change: Change, specId: string): SpecItem {
@@ -297,6 +299,10 @@ function parseDesignImpact(markdown: string): DesignImpact {
   const match = markdown.match(/^\s*-\s*档位：[^\n]*?\b(none|visual|design_system)\b/m);
   if (!match) fail("proposal.md must declare Design Impact: none, visual, or design_system.");
   return match[1] as DesignImpact;
+}
+
+async function completedArtifact(path: string): Promise<boolean> {
+  return (await exists(path)) && !/<change-id>|<.*>/.test(await readFile(path, "utf8"));
 }
 
 async function assertDesignReady(dir: string): Promise<void> {
@@ -387,7 +393,7 @@ function usage(): string {
 Usage:
   specflow init [path]
   specflow new <change-id> [--prd <path> ...] [--label <label> ...]
-  specflow add-spec <change-id> <spec-id> <title> [--depends-on <spec-id> ...]
+  specflow add-spec <change-id> <spec-id> <title> [--depends-on <spec-id> ...] [--path <glob> ...]
   specflow submit-plan <change-id>
   specflow status [change-id]
   specflow validate [change-id]
@@ -451,7 +457,7 @@ async function commandNew(changeId: string, prds: string[], labels: string[]): P
   console.log(`Created change ${changeId} at ${relative(process.cwd(), dir)}`);
 }
 
-async function commandAddSpec(changeId: string, specId: string, title: string, dependencies: string[]): Promise<void> {
+async function commandAddSpec(changeId: string, specId: string, title: string, dependencies: string[], paths: string[]): Promise<void> {
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(specId)) fail("spec-id must be lowercase kebab-case.");
   const change = await readChange(changeId);
   if (change.state !== "planning") fail(`Specs can only be added while planning (currently ${change.state}).`);
@@ -462,8 +468,8 @@ async function commandAddSpec(changeId: string, specId: string, title: string, d
   const specPath = join(changeDir(changeId), "specs", `${specId}.md`);
   const specTemplate = await readFile(specPath, "utf8");
   await writeFile(specPath, specTemplate.replace("<domain>", specId).replace("<change-id>", changeId));
-  change.specs.push({ id: specId, title, state: "todo", depends_on: dependencies, qa_attempts: 0, qa_report: null });
-  record(change, "spec_added", `${specId}${dependencies.length ? ` depends_on:${dependencies.join(",")}` : ""}`);
+  change.specs.push({ id: specId, title, state: "todo", depends_on: dependencies, ...(paths.length ? { paths } : {}), qa_attempts: 0, qa_report: null });
+  record(change, "spec_added", `${specId}${dependencies.length ? ` depends_on:${dependencies.join(",")}` : ""}${paths.length ? ` paths:${paths.join(",")}` : ""}`);
   await saveChange(change);
   console.log(`Added spec ${specId} to ${changeId}.`);
 }
@@ -596,10 +602,13 @@ async function commandDispatch(changeId: string, role: Role, specId?: string): P
   const expires = new Date(Date.now() + minutes * 60_000).toISOString();
   const route = resolveRoute(config, change, role);
   const adapterName = config.agents?.[route]?.adapter ?? route;
+  const designInputs: string[] = [];
+  if (role !== "planner") for (const artifact of ["design.md", "ux-design.md"]) if (await completedArtifact(join(changeDir(changeId), artifact))) designInputs.push(artifact);
+  const implementerPaths = spec?.paths?.length ? spec.paths : config.execution?.implementer_paths ?? ["src/**", "tests/**"];
   const task: Task = {
     task_id: taskId, change_id: changeId, role, ...(spec ? { target_spec: spec.id } : {}), adapter: adapterName, lease_id: leaseId,
-    inputs: role === "planner" ? ["proposal.md"] : ["proposal.md", "tasks.md", `specs/${spec?.id}.md`],
-    allowed_paths: role === "implementer" ? ["src/**", "tests/**", `.${join("specflow", "changes", changeId)}/**`] : [`.specflow/changes/${changeId}/**`],
+    inputs: role === "planner" ? ["proposal.md"] : ["proposal.md", "tasks.md", `specs/${spec?.id}.md`, ...designInputs],
+    allowed_paths: role === "implementer" ? [...implementerPaths, `.${join("specflow", "changes", changeId)}/**`] : [`.specflow/changes/${changeId}/**`],
     expected_outputs: role === "reviewer" ? ["qa_report", "result"] : ["result"], test_commands: config.quality?.test_commands ?? [], next_on_success: role === "implementer" ? "reviewing" : "ready", subagents: "forbidden",
   };
   change.leases.push({
@@ -624,7 +633,8 @@ async function commandDispatch(changeId: string, role: Role, specId?: string): P
         const agentName = `${role}-${taskId}`.slice(0, 32).replace(/[^a-z0-9_-]/g, "-");
         const kind = config.herdr?.kind?.[role] ?? "codex";
         const startTimeout = String(config.herdr?.start_timeout_ms ?? 30_000);
-        await startHerdrAgent(["agent", "start", agentName, "--kind", kind, "--pane", paneId, "--timeout", startTimeout], process.cwd());
+        const nativeArgs = config.herdr?.args?.[role] ?? [];
+        await startHerdrAgent(["agent", "start", agentName, "--kind", kind, "--pane", paneId, "--timeout", startTimeout, ...(nativeArgs.length ? ["--", ...nativeArgs] : [])], process.cwd());
         await herdrCommand(["agent", "wait", agentName, "--until", "idle", "--timeout", startTimeout], process.cwd());
         await herdrCommand(["agent", "prompt", agentName, taskPrompt(task)], process.cwd());
         task.runtime = { provider: "herdr", agent_name: agentName, pane_id: paneId, state: "working" };
@@ -755,7 +765,8 @@ async function commandImportResult(changeId: string, taskId: string, resultPath:
       else { spec.qa_attempts += 1; spec.state = "repairing"; change.state = "repairing"; record(change, "repair_dispatched", `${spec.id}:attempt-${spec.qa_attempts}`); }
     } else { change.resume_state = change.state; change.state = "decision_required"; record(change, "decision_required", `${spec.id}:${result.category ?? "review_escalation"}`); }
   } else { change.state = "awaiting_plan_approval"; record(change, "plan_submitted"); }
-  await cp(resolve(resultPath), join(changeDir(changeId), "handoffs", `${taskId}.result.yaml`));
+  const canonicalResult = join(changeDir(changeId), "handoffs", `${taskId}.result.yaml`);
+  if (resolve(resultPath) !== resolve(canonicalResult)) await cp(resolve(resultPath), canonicalResult);
   leaseIndex = change.leases.findIndex((lease) => lease.id === task.lease_id);
   change.leases.splice(leaseIndex, 1);
   const nextSpec = task.role === "reviewer" && config.execution?.auto_start_next_ready_spec && change.state === "ready"
@@ -851,7 +862,8 @@ async function main(): Promise<void> {
   if (command === "add-spec") {
     const [changeId, specId, title, ...rest] = args;
     const dependencies = rest.flatMap((value, index) => value === "--depends-on" ? [rest[index + 1]] : []).filter((value): value is string => Boolean(value));
-    return commandAddSpec(changeId ?? fail("add-spec requires <change-id>."), specId ?? fail("add-spec requires <spec-id>."), title ?? fail("add-spec requires <title>."), dependencies);
+    const paths = rest.flatMap((value, index) => value === "--path" ? [rest[index + 1]] : []).filter((value): value is string => Boolean(value));
+    return commandAddSpec(changeId ?? fail("add-spec requires <change-id>."), specId ?? fail("add-spec requires <spec-id>."), title ?? fail("add-spec requires <title>."), dependencies, paths);
   }
   if (command === "submit-plan") return commandSubmitPlan(args[0] ?? fail("submit-plan requires <change-id>."));
   if (command === "status") return commandStatus(args[0]);
