@@ -82,6 +82,8 @@ specflow monitor <change-id> <task-id>
 
 `herdr.args.<role>` 可为该角色的 Agent 传入原生启动参数（追加在 `herdr agent start ... --` 之后），例如为 Claude worker 指定 `[--permission-mode, auto]`，减少权限弹窗导致的 `blocked`。必须是字符串列表。
 
+Herdr pane 从 server 环境启动，不会继承派发进程（如在 Claude Code 中运行的 orchestrator）的环境变量。`herdr.inherit_env` 列出的变量若在派发进程中存在，会通过 `pane split --env` 传给 worker pane。典型用途是代理：`[HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY, http_proxy, https_proxy, all_proxy, no_proxy]`。
+
 如果状态为 `blocked`，先使用 `herdr agent read <agent-name>` 检查具体权限请求或问题。确认请求安全且在任务允许范围内后，显式批准：
 
 ```bash

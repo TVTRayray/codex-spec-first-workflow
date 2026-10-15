@@ -63,6 +63,9 @@ herdr:
     reviewer: codex
   # Native agent arguments passed after `--` to `herdr agent start`, per role.
   args: {} # e.g. { implementer: [--permission-mode, auto] }
+  # Variables copied from the dispatching process into new worker panes (Herdr panes
+  # otherwise start from the server environment), e.g. [HTTP_PROXY, HTTPS_PROXY, NO_PROXY].
+  inherit_env: []
   direction: right
   start_timeout_ms: 30000
 

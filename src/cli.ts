@@ -72,7 +72,7 @@ interface Config {
   agents?: Record<string, { adapter?: string }>;
   routing?: { planner?: string; implementer?: string; reviewer?: string; overrides?: RouteOverride[] };
   subagents?: { default?: "forbidden" | "orchestrator_only"; allowed_callers?: string[]; allowed_roles?: SubagentRole[]; max_depth?: number; max_concurrency?: number; max_runtime_minutes?: number; writable_paths?: string[]; require_bounded_task?: boolean; can_spawn_subagents?: boolean; adapter?: string };
-  herdr?: { kind?: Partial<Record<Role, string>>; args?: Partial<Record<Role, string[]>>; direction?: "right" | "down"; start_timeout_ms?: number };
+  herdr?: { kind?: Partial<Record<Role, string>>; args?: Partial<Record<Role, string[]>>; inherit_env?: string[]; direction?: "right" | "down"; start_timeout_ms?: number };
 }
 
 interface Task {
@@ -205,6 +205,7 @@ function validateConfig(config: Config): void {
   if (subagents?.default === "orchestrator_only" && !(subagents.allowed_roles ?? []).length) fail("orchestrator_only requires at least one allowed_roles entry.");
   if (subagents?.writable_paths?.length) fail("subagents.writable_paths must be empty.");
   if (subagents?.require_bounded_task === false) fail("subagents.require_bounded_task must remain true.");
+  if (config.herdr?.inherit_env !== undefined && (!Array.isArray(config.herdr.inherit_env) || config.herdr.inherit_env.some((name) => typeof name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)))) fail("herdr.inherit_env must be a list of environment variable names.");
   for (const [role, args] of Object.entries(config.herdr?.args ?? {})) if (!Array.isArray(args) || args.some((arg) => typeof arg !== "string")) fail(`herdr.args.${role} must be a list of strings.`);
 }
 
@@ -634,7 +635,9 @@ async function commandDispatch(changeId: string, role: Role, specId?: string): P
       record(change, "adapter_fallback", "herdr unavailable outside a Herdr-managed pane; using manual handoff");
     } else {
       try {
-        const split = await herdrCommand(["pane", "split", "--current", "--direction", config.herdr?.direction ?? "right", "--cwd", process.cwd(), "--no-focus"], process.cwd());
+        // Herdr panes start from the server environment, so forward selected variables (e.g. proxies) explicitly.
+        const inheritedEnv = (config.herdr?.inherit_env ?? []).flatMap((name) => process.env[name] !== undefined ? ["--env", `${name}=${process.env[name]}`] : []);
+        const split = await herdrCommand(["pane", "split", "--current", "--direction", config.herdr?.direction ?? "right", "--cwd", process.cwd(), ...inheritedEnv, "--no-focus"], process.cwd());
         const paneId = split?.result?.pane?.pane_id;
         if (!paneId) fail("Herdr did not return a pane id.");
         const agentName = `${role}-${taskId}`.slice(0, 32).replace(/[^a-z0-9_-]/g, "-");
