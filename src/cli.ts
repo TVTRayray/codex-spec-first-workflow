@@ -540,7 +540,14 @@ async function commandResolve(changeId: string, target: string, reason: string):
   if (!allowed.includes(target)) fail(`resolve target must be one of: ${allowed.join(", ")}.`);
   const change = await readChange(changeId);
   if (!["blocked", "decision_required"].includes(change.state)) fail(`Can only resolve blocked or decision_required changes (currently ${change.state}).`);
-  const resolvedTarget = target === "previous" ? change.resume_state ?? fail("No previous state was recorded.") : target as ChangeState;
+  let resolvedTarget = target === "previous" ? change.resume_state ?? fail("No previous state was recorded.") : target as ChangeState;
+  for (const spec of change.specs) {
+    if (spec.state === "implementing" && !change.leases.some((lease) => lease.spec_id === spec.id)) {
+      spec.state = "ready";
+      record(change, "spec_released", `${spec.id}: implementing without a lease`);
+    }
+  }
+  if (resolvedTarget === "implementing" && !change.leases.length) resolvedTarget = "ready";
   if (resolvedTarget === "repairing" && !change.specs.some((spec) => spec.state === "repairing")) fail("Cannot resolve to repairing without a spec in repairing state.");
   if (resolvedTarget === "ready" && !change.specs.some((spec) => spec.state === "ready")) transitionToReady(change, config.execution?.sequential_specs ?? true);
   else change.state = resolvedTarget;
@@ -738,8 +745,14 @@ async function commandImportResult(changeId: string, taskId: string, resultPath:
   const conflictingLease = change.leases.find((lease) => lease.id !== task.lease_id && (task.target_spec ? lease.spec_id === task.target_spec : lease.role === task.role));
   if (conflictingLease) fail(`Cannot import result while newer conflicting lease ${conflictingLease.id} is active.`);
   if (Date.parse(matchingLease!.expires_at) <= Date.now()) record(change, "late_result_imported", `${task.lease_id}:${taskId}`);
-  if (result.outcome === "blocked") { change.resume_state = change.state; change.state = "blocked"; record(change, "task_blocked", result.summary); }
-  else if (result.outcome === "needs_decision") { change.resume_state = change.state; change.state = "decision_required"; record(change, "decision_required", result.summary); }
+  if (result.outcome === "blocked" || result.outcome === "needs_decision") {
+    // A paused implementer gives its spec back; otherwise the spec stays "implementing" without a lease and cannot be redispatched.
+    const pausedSpec = task.role === "implementer" && task.target_spec ? getSpec(change, task.target_spec) : undefined;
+    if (pausedSpec?.state === "implementing") pausedSpec.state = matchingLease!.previous_spec_state ?? "ready";
+    change.resume_state = pausedSpec ? matchingLease!.previous_change_state ?? "ready" : change.state;
+    change.state = result.outcome === "blocked" ? "blocked" : "decision_required";
+    record(change, result.outcome === "blocked" ? "task_blocked" : "decision_required", result.summary);
+  }
   else if (task.role === "implementer") {
     const spec = getSpec(change, task.target_spec!);
     spec.state = "reviewing";

@@ -308,6 +308,57 @@ test("applies label route overrides", async () => {
   }
 });
 
+test("returns a spec to ready when its implementer needs a decision, so resolve can redispatch", async () => {
+  const project = await mkdtemp(join(tmpdir(), "specflow-test-"));
+  try {
+    await run(process.cwd(), "init", project);
+    await run(project, "new", "decide");
+    await run(project, "add-spec", "decide", "only", "Only");
+    await run(project, "submit-plan", "decide");
+    await run(project, "approve", "decide");
+    const changeDir = join(project, ".specflow", "changes", "decide");
+    const handoffDir = join(changeDir, "handoffs");
+    await run(project, "dispatch", "decide", "implementer", "--spec", "only");
+    const task = parse(await readFile(join(handoffDir, (await readdir(handoffDir))[0]!), "utf8")) as { task_id: string; lease_id: string };
+    const result = join(project, "result.yaml");
+    await writeFile(result, stringify({ task_id: task.task_id, lease_id: task.lease_id, outcome: "needs_decision", summary: "token conflict" }));
+    await run(project, "import-result", "decide", task.task_id, result);
+    let state = parse(await readFile(join(changeDir, "state.yaml"), "utf8")) as { state: string; resume_state?: string; specs: Array<{ state: string }> };
+    assert.equal(state.state, "decision_required");
+    assert.equal(state.resume_state, "ready");
+    assert.equal(state.specs[0]?.state, "ready");
+    await run(project, "resolve", "decide", "previous", "--reason", "use darker token");
+    state = parse(await readFile(join(changeDir, "state.yaml"), "utf8")) as { state: string; specs: Array<{ state: string }> };
+    assert.equal(state.state, "ready");
+    await run(project, "dispatch", "decide", "implementer", "--spec", "only");
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test("resolve releases a spec left implementing without a lease", async () => {
+  const project = await mkdtemp(join(tmpdir(), "specflow-test-"));
+  try {
+    await run(process.cwd(), "init", project);
+    await run(project, "new", "legacy");
+    await run(project, "add-spec", "legacy", "only", "Only");
+    await run(project, "submit-plan", "legacy");
+    await run(project, "approve", "legacy");
+    const statePath = join(project, ".specflow", "changes", "legacy", "state.yaml");
+    const legacy = parse(await readFile(statePath, "utf8")) as Record<string, unknown> & { specs: Array<{ state: string }> };
+    legacy.state = "decision_required";
+    legacy.resume_state = "implementing";
+    legacy.specs[0]!.state = "implementing";
+    await writeFile(statePath, stringify(legacy));
+    await run(project, "resolve", "legacy", "previous", "--reason", "decided");
+    const state = parse(await readFile(statePath, "utf8")) as { state: string; specs: Array<{ state: string }> };
+    assert.equal(state.state, "ready");
+    assert.equal(state.specs[0]?.state, "ready");
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
 test("imports a matching result after its lease expires", async () => {
   const project = await mkdtemp(join(tmpdir(), "specflow-test-"));
   try {
