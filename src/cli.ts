@@ -395,6 +395,7 @@ Usage:
   specflow init [path]
   specflow new <change-id> [--prd <path> ...] [--label <label> ...]
   specflow add-spec <change-id> <spec-id> <title> [--depends-on <spec-id> ...] [--path <glob> ...]
+  specflow add-path <change-id> <spec-id> --path <glob> [--path <glob> ...] --reason <text> --confirm
   specflow submit-plan <change-id>
   specflow status [change-id]
   specflow validate [change-id]
@@ -473,6 +474,23 @@ async function commandAddSpec(changeId: string, specId: string, title: string, d
   record(change, "spec_added", `${specId}${dependencies.length ? ` depends_on:${dependencies.join(",")}` : ""}${paths.length ? ` paths:${paths.join(",")}` : ""}`);
   await saveChange(change);
   console.log(`Added spec ${specId} to ${changeId}.`);
+}
+
+async function commandAddPath(changeId: string, specId: string, paths: string[], reason: string, confirmed: boolean): Promise<void> {
+  if (!confirmed) fail("Widening a spec's write scope requires --confirm (human-approved).");
+  if (!reason.trim()) fail("add-path requires a nonempty --reason.");
+  if (!paths.length) fail("add-path requires at least one --path.");
+  const change = await readChange(changeId);
+  if (["archived", "cancelled"].includes(change.state)) fail(`Cannot change scope in state ${change.state}.`);
+  const spec = getSpec(change, specId);
+  if (spec.state === "qa_passed") fail(`Spec ${specId} already passed QA; reopen it first.`);
+  if (change.leases.some((lease) => lease.spec_id === specId)) fail(`Spec ${specId} has an active lease; the new scope applies to the next dispatch only after it ends.`);
+  const added = paths.filter((path) => !(spec.paths ?? []).includes(path));
+  if (!added.length) fail("All paths are already in the spec scope.");
+  spec.paths = [...(spec.paths ?? []), ...added];
+  record(change, "spec_paths_added", JSON.stringify({ spec: specId, paths: added, reason: reason.trim() }));
+  await saveChange(change);
+  console.log(`Added ${added.join(", ")} to ${specId}.`);
 }
 
 async function commandSubmitPlan(changeId: string): Promise<void> {
@@ -889,6 +907,12 @@ async function main(): Promise<void> {
     const dependencies = rest.flatMap((value, index) => value === "--depends-on" ? [rest[index + 1]] : []).filter((value): value is string => Boolean(value));
     const paths = rest.flatMap((value, index) => value === "--path" ? [rest[index + 1]] : []).filter((value): value is string => Boolean(value));
     return commandAddSpec(changeId ?? fail("add-spec requires <change-id>."), specId ?? fail("add-spec requires <spec-id>."), title ?? fail("add-spec requires <title>."), dependencies, paths);
+  }
+  if (command === "add-path") {
+    const [changeId, specId, ...rest] = args;
+    const paths = rest.flatMap((value, index) => value === "--path" ? [rest[index + 1]] : []).filter((value): value is string => Boolean(value));
+    const reasonAt = rest.indexOf("--reason");
+    return commandAddPath(changeId ?? fail("add-path requires <change-id>."), specId ?? fail("add-path requires <spec-id>."), paths, reasonAt >= 0 ? rest[reasonAt + 1] ?? "" : "", rest.includes("--confirm"));
   }
   if (command === "submit-plan") return commandSubmitPlan(args[0] ?? fail("submit-plan requires <change-id>."));
   if (command === "status") return commandStatus(args[0]);

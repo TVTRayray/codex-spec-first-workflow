@@ -368,6 +368,30 @@ test("resolve to repairing returns a reviewer-escalated spec to the implementer"
   }
 });
 
+test("add-path widens a spec scope with an audit record before the next dispatch", async () => {
+  const project = await mkdtemp(join(tmpdir(), "specflow-test-"));
+  try {
+    await run(process.cwd(), "init", project);
+    await run(project, "new", "widen");
+    await run(project, "add-spec", "widen", "only", "Only", "--path", "src/a.ts");
+    await run(project, "submit-plan", "widen");
+    await run(project, "approve", "widen");
+    await assert.rejects(() => run(project, "add-path", "widen", "only", "--path", "src/b.ts", "--reason", "gap"), /--confirm/);
+    await run(project, "add-path", "widen", "only", "--path", "src/b.ts", "--reason", "planning gap", "--confirm");
+    const changeDir = join(project, ".specflow", "changes", "widen");
+    const state = parse(await readFile(join(changeDir, "state.yaml"), "utf8")) as { specs: Array<{ paths: string[] }>; history: Array<{ event: string }> };
+    assert.deepEqual(state.specs[0]?.paths, ["src/a.ts", "src/b.ts"]);
+    assert.ok(state.history.some((entry) => entry.event === "spec_paths_added"));
+    await run(project, "dispatch", "widen", "implementer", "--spec", "only");
+    const handoffDir = join(changeDir, "handoffs");
+    const task = parse(await readFile(join(handoffDir, (await readdir(handoffDir))[0]!), "utf8")) as { allowed_paths: string[] };
+    assert.ok(task.allowed_paths.includes("src/b.ts"));
+    await assert.rejects(() => run(project, "add-path", "widen", "only", "--path", "src/c.ts", "--reason", "late", "--confirm"), /active lease/);
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
 test("resolve releases a spec left implementing without a lease", async () => {
   const project = await mkdtemp(join(tmpdir(), "specflow-test-"));
   try {
